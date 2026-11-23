@@ -1,0 +1,71 @@
+# 実行用。処理の本体と記録は別の非公開リポジトリにあり、ここには置かない。
+name: run
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: run
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.SRC_REPO }}
+          ssh-key: ${{ secrets.SRC_DEPLOY_KEY }}
+          persist-credentials: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: setup
+        run: npm ci --prefix new-monitor --no-audit --no-fund --silent
+
+      - name: restore state
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: new-monitor/state
+          key: nm-state-${{ github.run_id }}
+          restore-keys: nm-state-
+
+      - name: first run
+        if: steps.cache.outputs.cache-matched-key == ''
+        run: mkdir -p new-monitor/state && cp new-monitor/data/state-snapshot.json.enc new-monitor/state/state.json.enc
+
+      - name: run
+        env:
+          NM_KEY: ${{ secrets.NM_KEY }}
+          NM_HOMES_URL: ${{ secrets.NM_HOMES_URL }}
+          NM_HOMES_TOKEN: ${{ secrets.NM_HOMES_TOKEN }}
+          NM_DASH_URL: ${{ secrets.NM_DASH_URL }}
+          NM_DASH_TOKEN: ${{ secrets.NM_DASH_TOKEN }}
+          NM_NOTIFY: '1'
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: node new-monitor/run.js > /dev/null
+
+      - name: save state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: new-monitor/state
+          key: nm-state-${{ github.run_id }}
+
+      - name: save results
+        if: always()
+        run: |
+          git config user.name "new-monitor"
+          git config user.email "new-monitor@users.noreply.github.com"
+          git add new-monitor/results
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -q -m "新しい監視の結果（暗号化）"
+          for i in 1 2 3; do git pull --rebase -q && git push -q && break; sleep 5; done
