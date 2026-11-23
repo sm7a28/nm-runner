@@ -3,6 +3,9 @@ name: run
 
 on:
   workflow_dispatch:
+  # つなぎ：起動用トークンができるまで GitHub の定時実行で動かす（JST 8:05/12:05/15:05/18:05/20:05）
+  schedule:
+    - cron: '5 23,3,6,9,11 * * *'
 
 concurrency:
   group: run
